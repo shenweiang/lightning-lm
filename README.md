@@ -80,11 +80,11 @@ Features of Lightning-LM:
 
 - Mapping on the VBR campus dataset:
 
-  ![](./doc/slam_vbr.gif)
+  <!-- ![](./doc/slam_vbr.gif) -->
 
 - Localization on VBR
 
-  ![](./doc/lm_loc_vbr_campus.gif)
+  <!-- ![](./doc/lm_loc_vbr_campus.gif) -->
 
 - Map on VBR
     - Point Cloud
@@ -96,7 +96,7 @@ Features of Lightning-LM:
 
 - Localization on the NCLT dataset
 
-![](./doc/lm_loc1_nclt.gif)
+<!-- ![](./doc/lm_loc1_nclt.gif) -->
 
 - Data on the Deep Robotics quadruped robot
 

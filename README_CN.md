@@ -64,11 +64,11 @@ Lightning-LM特性：
 
 - VBR campus数据集上的建图：
 
-![](./doc/slam_vbr.gif)
+<!-- ![](./doc/slam_vbr.gif) -->
 
 - VBR上的定位
 
-  ![](./doc/lm_loc_vbr_campus.gif)
+  <!-- ![](./doc/lm_loc_vbr_campus.gif) -->
 
 - VBR上的地图
     - 点云
@@ -80,7 +80,7 @@ Lightning-LM特性：
 
 - NCLT 数据集上的定位
 
-![](./doc/lm_loc1_nclt.gif)
+<!-- ![](./doc/lm_loc1_nclt.gif) -->
 
 - 云深处四足机械狗上的数据
 
