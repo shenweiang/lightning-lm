@@ -10,6 +10,7 @@
 #include "common/imu.h"
 #include "common/odom.h"
 #include "common/point_def.h"
+#include "common/rtk_data.h"
 
 namespace lightning {
 
@@ -21,6 +22,7 @@ struct MeasureGroup {
 
     std::deque<IMUPtr> imu_;    // 两个scan之间的IMU测量
     std::deque<OdomPtr> odom_;  // 两个scan之间的odom测量
+    std::deque<RTKData> rtk_;   // 两个scan之间的RTK/INS观测
 
     CloudPtr scan_raw_ = nullptr;         // 原始传感器的扫描数据
     CloudPtr scan_ = nullptr;             // 选点、距离过滤之后的数据

@@ -77,6 +77,17 @@ class ImuProcess {
 
     bool use_imu_filter_ = true;
     IMUFilter filter_;
+
+    /// RTK 穿插更新上下文（由 LaserMapping 设置）
+    double rtk_noise_ratio_ = 1.0;
+    RTKData *current_rtk_ptr_ = nullptr;
+
+   public:
+    /// 设置 RTK 更新所需的上下文（由 LaserMapping 在 Init 时调用）
+    void SetRTKContext(double noise_ratio, RTKData *current_rtk) {
+        rtk_noise_ratio_ = noise_ratio;
+        current_rtk_ptr_ = current_rtk;
+    }
 };
 
 inline ImuProcess::ImuProcess() : b_first_frame_(true), imu_need_init_(true) {
@@ -200,6 +211,9 @@ inline void ImuProcess::UndistortPcl(const MeasureGroup &meas, ESKF &kf_state, C
         }
     }
 
+    /// 按时间线顺序遍历 RTK 观测，与 IMU 穿插处理
+    auto it_rtk = meas.rtk_.begin();
+
     for (auto it_imu = v_imu.begin(); it_imu < (v_imu.end() - 1); it_imu++) {
         auto &&head = *(it_imu);
         auto &&tail = *(it_imu + 1);
@@ -230,6 +244,18 @@ inline void ImuProcess::UndistortPcl(const MeasureGroup &meas, ESKF &kf_state, C
         Q_.block<3, 3>(0, 0).diagonal() = cov_gyr_;
         Q_.block<3, 3>(3, 3).diagonal() = cov_acc_;
         Q_.block<3, 3>(6, 6).diagonal() = cov_bias_gyr_;
+
+        /// RTK 穿插更新：在 head→tail 预测之前，用 [head, tail) 区间内的 RTK 观测更新 ESKF
+        /// 将 RTK 观测近似对齐到 head 时刻（中低速场景下 IMU 间隔足够小，误差可忽略）
+        /// 先 Update 再 Predict，与 fusions_slam 参考实现策略一致
+        while (it_rtk != meas.rtk_.end() && it_rtk->timestamp < tail->timestamp) {
+            if (it_rtk->timestamp >= head->timestamp && current_rtk_ptr_) {
+                *current_rtk_ptr_ = *it_rtk;
+                kf_state.Update(ESKF::ObsType::GPS, rtk_noise_ratio_);
+            }
+            ++it_rtk;
+        }
+
         kf_state.Predict(dt, Q_, gyro, acc);
 
         // LOG(INFO) << "gyro: " << gyro.transpose() << ", dt: " << dt;

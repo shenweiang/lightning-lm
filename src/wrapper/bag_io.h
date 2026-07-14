@@ -17,7 +17,9 @@
 #include <sensor_msgs/msg/laser_scan.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
+#ifdef USE_LIVOX
 #include "livox_ros_driver2/msg/custom_msg.hpp"
+#endif
 
 #include "common/imu.h"
 #include "common/odom.h"
@@ -48,7 +50,9 @@ class RosbagIO {
     using Scan2DHandle = std::function<bool(sensor_msgs::msg::LaserScan::SharedPtr)>;
 
     using PointCloud2Handle = std::function<bool(sensor_msgs::msg::PointCloud2::SharedPtr)>;
+#ifdef USE_LIVOX
     using LivoxCloud2Handle = std::function<bool(livox_ros_driver2::msg::CustomMsg::SharedPtr)>;
+#endif
     using FullPointCloudHandle = std::function<bool(FullCloudPtr)>;
     using ImuHandle = std::function<bool(IMUPtr)>;
     using OdomHandle = std::function<bool(const OdomPtr &)>;
@@ -76,6 +80,7 @@ class RosbagIO {
         });
     }
 
+#ifdef USE_LIVOX
     /// livox 处理
     RosbagIO &AddLivoxCloudHandle(const std::string &topic_name, LivoxCloud2Handle f) {
         return AddHandle(topic_name, [f, this](const MsgType &m) -> bool {
@@ -86,6 +91,7 @@ class RosbagIO {
             return f(msg);
         });
     }
+#endif
 
     RosbagIO &AddImuHandle(const std::string &topic_name, ImuHandle f) {
         return AddHandle(topic_name, [f, this](const MsgType &m) -> bool {
@@ -128,7 +134,9 @@ class RosbagIO {
     rclcpp::Serialization<nav_msgs::msg::Odometry> seri_odom_;
     rclcpp::Serialization<sensor_msgs::msg::Imu> seri_imu_;
     rclcpp::Serialization<sensor_msgs::msg::PointCloud2> seri_cloud2_;
+#ifdef USE_LIVOX
     rclcpp::Serialization<livox_ros_driver2::msg::CustomMsg> seri_livox_;
+#endif
 
     std::string bag_file_;
     DatasetType dataset_type_ = DatasetType::NCLT;

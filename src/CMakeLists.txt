@@ -1,5 +1,6 @@
 add_library(${PROJECT_NAME}.libs SHARED
         common/nav_state.cc
+        common/rtk_utils.cc
         common/constant.h
         common/options.cc
         common/params.cc
@@ -59,9 +60,13 @@ ament_target_dependencies(
 )
 
 add_dependencies(${PROJECT_NAME}.libs
-        livox_interfaces2__rosidl_typesupport_cpp
         ${PROJECT_NAME}__rosidl_typesupport_cpp
 )
+if (USE_LIVOX)
+    add_dependencies(${PROJECT_NAME}.libs
+        livox_interfaces2__rosidl_typesupport_cpp
+    )
+endif ()
 
 include_directories(${PROJECT_SOURCE_DIR}/src/core/miao)
 add_subdirectory(core/miao)
@@ -71,9 +76,13 @@ target_link_libraries(${PROJECT_NAME}.libs
         ${PCL_LIBRARIES}
         miao.core
         miao.utils
-        livox_interfaces2__rosidl_typesupport_cpp
         ${PROJECT_NAME}__rosidl_typesupport_cpp
 )
+if (USE_LIVOX)
+    target_link_libraries(${PROJECT_NAME}.libs
+        livox_interfaces2__rosidl_typesupport_cpp
+    )
+endif ()
 
 install(TARGETS ${PROJECT_NAME}.libs miao.core miao.utils
         DESTINATION lib)

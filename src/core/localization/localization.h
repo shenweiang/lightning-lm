@@ -54,7 +54,9 @@ class Localization {
 
     /// 处理lidar消息
     void ProcessLidarMsg(const sensor_msgs::msg::PointCloud2::SharedPtr laser_msg);
+#ifdef USE_LIVOX
     void ProcessLivoxLidarMsg(const livox_ros_driver2::msg::CustomMsg::SharedPtr laser_msg);
+#endif
 
     /// 处理IMU消息
     void ProcessIMUMsg(IMUPtr imu);

@@ -10,12 +10,15 @@
 #include "common/imu.h"
 #include "common/keyframe.h"
 #include "common/options.h"
+#include "common/rtk_data.h"
 #include "core/ivox3d/ivox3d.h"
 #include "core/lio/eskf.hpp"
 #include "core/lio/imu_processing.hpp"
 #include "pointcloud_preprocess.h"
 
+#ifdef USE_LIVOX
 #include "livox_ros_driver2/msg/custom_msg.hpp"
+#endif
 
 namespace lightning {
 
@@ -70,13 +73,18 @@ class LaserMapping {
     /// 处理ROS2的点云
     void ProcessPointCloud2(const sensor_msgs::msg::PointCloud2::SharedPtr &msg);
 
+#ifdef USE_LIVOX
     /// 处理livox的点云
     void ProcessPointCloud2(const livox_ros_driver2::msg::CustomMsg::SharedPtr &msg);
+#endif
 
     /// 如果已经做了预处理，也可以直接处理点云
     void ProcessPointCloud2(CloudPtr cloud);
 
     void ProcessIMU(const lightning::IMUPtr &msg_in);
+
+    /// 处理RTK/INS观测数据（在线模式）
+    void ProcessRTK(const RTKData &rtk);
 
     /// 保存前端的地图
     void SaveMap();
@@ -120,6 +128,9 @@ class LaserMapping {
     bool SyncPackages();
 
     void ObsModel(NavState &s, ESKF::CustomObservationModel &obs);
+
+    /// GPS/RTK 六自由度位姿观测模型（供 ESKF gps_obs_func_ 回调使用）
+    void GPSObsModel(NavState &s, ESKF::CustomObservationModel &obs);
 
     inline void PointBodyToWorld(const PointType &pi, PointType &po) {
         Vec3d p_global(state_point_.rot_ *
@@ -187,6 +198,7 @@ class LaserMapping {
 
     std::deque<PointCloudType::Ptr> lidar_buffer_;
     std::deque<lightning::IMUPtr> imu_buffer_;
+    std::deque<RTKData> rtk_buffer_;  // RTK 观测数据缓冲
 
     /// options
     bool keep_first_imu_estimation_ = false;  // 在没有建立地图前，是否要使用前几帧的IMU状态
@@ -219,6 +231,10 @@ class LaserMapping {
     ESKF kf_imu_;  // imu 最新时刻的eskf状态
 
     NavState state_point_;  // ekf current state
+
+    /// RTK/GPS 相关
+    RTKData current_rtk_;           // 当前用于 ESKF 更新的 RTK 观测
+    double rtk_noise_ratio_ = 1.0;  // RTK 观测噪声比例因子
 
     bool use_aa_ = false;  // use anderson acceleration?
 

@@ -5,17 +5,22 @@
 #ifndef LIGHTNING_SLAM_H
 #define LIGHTNING_SLAM_H
 
+#include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <string>
 
 #include "lightning/srv/save_map.hpp"
+#ifdef USE_LIVOX
 #include "livox_ros_driver2/msg/custom_msg.hpp"
+#endif
 
 #include "common/eigen_types.h"
 #include "common/imu.h"
 #include "common/keyframe.h"
+#include "common/rtk_data.h"
+#include "common/rtk_utils.h"
 
 namespace lightning {
 
@@ -69,7 +74,12 @@ class SlamSystem {
 
     /// 处理点云
     void ProcessLidar(const sensor_msgs::msg::PointCloud2::SharedPtr& cloud);
+#ifdef USE_LIVOX
     void ProcessLidar(const livox_ros_driver2::msg::CustomMsg::SharedPtr& cloud);
+#endif
+
+    /// 处理RTK/INS观测数据
+    void ProcessRTK(const nav_msgs::msg::Odometry::SharedPtr& msg);
 
     /// 实时模式下的spin
     void Spin();
@@ -96,11 +106,40 @@ class SlamSystem {
     rclcpp::Node::SharedPtr node_;
     std::string imu_topic_;
     std::string cloud_topic_;
+#ifdef USE_LIVOX
     std::string livox_topic_;
+#endif
 
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_ = nullptr;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_ = nullptr;
+#ifdef USE_LIVOX
     rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr livox_sub_ = nullptr;
+#endif
+
+    std::string rtk_topic_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr rtk_sub_ = nullptr;
+
+    /// RTK 地理原点（积累多帧取平均后确定，提高原点稳定性）
+    struct MapOrigin {
+        bool valid_ = false;
+        double latitude_ = 0.0;   ///< 原点纬度 (度)
+        double longitude_ = 0.0;  ///< 原点经度 (度)
+        double altitude_ = 0.0;   ///< 原点高程 (m)
+        UTMCoordinate utm_;       ///< 原点 UTM 坐标
+    };
+    MapOrigin rtk_origin_;
+
+    /// RTK 原点初始化 —— 中值滤波（对单帧坏值不敏感）
+    static constexpr int kRTKOriginInitFrames_ = 10;  ///< 原点初始化所需的 RTK 帧数
+    int rtk_origin_init_count_ = 0;                   ///< 已累积帧数
+    std::vector<double> rtk_origin_lats_;              ///< 纬度样本
+    std::vector<double> rtk_origin_lons_;              ///< 经度样本
+    std::vector<double> rtk_origin_alts_;              ///< 高程样本
+
+    double rtk_rot_noise_ = 0.0052;  ///< RTK 姿态观测噪声 (rad)，默认 0.3°，从 YAML 读取
+
+    /// RTK 位置跳变检测
+    RTKData last_valid_rtk_;  ///< 上一帧有效 RTK，用于跳变检测
 };
 }  // namespace lightning
 

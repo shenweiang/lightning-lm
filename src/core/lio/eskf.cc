@@ -305,6 +305,11 @@ void ESKF::Update(ESKF::ObsType obs, const double& R) {
             }
         }
 
+        // GPS 是线性观测模型（H = [I_6 | 0]），一次迭代即可收敛，无需多次迭代
+        if (obs == ObsType::GPS) {
+            custom_obs_model_.converge_ = true;
+        }
+
         if (custom_obs_model_.converge_) {
             converged_times++;
         }

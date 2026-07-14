@@ -155,6 +155,7 @@ void Localization::ProcessLidarMsg(const sensor_msgs::msg::PointCloud2::SharedPt
     }
 }
 
+#ifdef USE_LIVOX
 void Localization::ProcessLivoxLidarMsg(const livox_ros_driver2::msg::CustomMsg::SharedPtr cloud) {
     UL lock(global_mutex_);
     if (lidar_loc_ == nullptr || lio_ == nullptr || pgo_ == nullptr) {
@@ -172,6 +173,7 @@ void Localization::ProcessLivoxLidarMsg(const livox_ros_driver2::msg::CustomMsg:
         LidarOdomProcCloud(laser_cloud);
     }
 }
+#endif
 
 void Localization::LidarOdomProcCloud(CloudPtr cloud) {
     if (lio_ == nullptr) {

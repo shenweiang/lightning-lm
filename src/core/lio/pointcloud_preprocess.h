@@ -8,7 +8,9 @@
 
 #include "common/measure_group.h"
 #include "common/point_def.h"
+#ifdef USE_LIVOX
 #include "livox_ros_driver2/msg/custom_msg.hpp"
+#endif
 
 namespace lightning {
 
@@ -31,7 +33,9 @@ class PointCloudPreprocess {
     /// processors
     void Process(const sensor_msgs::msg::PointCloud2 ::SharedPtr &msg, PointCloudType::Ptr &pcl_out);
 
+#ifdef USE_LIVOX
     void Process(const livox_ros_driver2::msg::CustomMsg::SharedPtr &cloud, PointCloudType::Ptr &pcl_out);
+#endif
 
     void Set(LidarType lid_type, double bld, int pfilt_num);
 

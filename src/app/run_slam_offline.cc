@@ -64,12 +64,14 @@ int main(int argc, char** argv) {
                                   slam.ProcessLidar(msg);
                                   return true;
                               })
-        /// livox 的处理
+    /// livox 的处理
+#ifdef USE_LIVOX
         .AddLivoxCloudHandle("/livox/lidar",
                              [&slam](livox_ros_driver2::msg::CustomMsg::SharedPtr cloud) {
                                  slam.ProcessLidar(cloud);
                                  return true;
                              })
+#endif
         .Go();
 
     slam.SaveMap("");

@@ -14,6 +14,12 @@ set(CMAKE_BUILD_TYPE Release)
 # 导入第三方库，同时做一些全局编译选项配置
 add_definitions("-DPCL_NO_PRECOMPILE")
 
+# Livox LiDAR 支持（默认关闭，有 livox 环境时设为 ON）
+option(USE_LIVOX "Build with Livox LiDAR support" OFF)
+if (USE_LIVOX)
+    add_definitions(-DUSE_LIVOX)
+endif ()
+
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -fopenmp -fPIC -g")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS} -O2 -fopenmp -fPIC -g -ggdb")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS} -ggdb -g -fopenmp -fPIC -g")
@@ -55,7 +61,9 @@ install(DIRECTORY config
         DESTINATION lib/${PROJECT_NAME}/
 )
 
-add_subdirectory(thirdparty/livox_ros_driver)
+if (USE_LIVOX)
+    add_subdirectory(thirdparty/livox_ros_driver)
+endif ()
 
 add_subdirectory(src)
 

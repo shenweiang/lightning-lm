@@ -48,9 +48,11 @@ include_directories(
         ${nav_msgs_INCLUDE_DIRS}
 )
 
-include_directories(
-        ${CMAKE_CURRENT_BINARY_DIR}/thirdparty/livox_ros_driver/rosidl_generator_cpp
-)
+if (USE_LIVOX)
+    include_directories(
+            ${CMAKE_CURRENT_BINARY_DIR}/thirdparty/livox_ros_driver/rosidl_generator_cpp
+    )
+endif ()
 
 include_directories(
         ${PROJECT_SOURCE_DIR}/src

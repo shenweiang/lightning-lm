@@ -10,7 +10,9 @@
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
+#ifdef USE_LIVOX
 #include "livox_ros_driver2/msg/custom_msg.hpp"
+#endif
 
 #include "common/eigen_types.h"
 #include "common/imu.h"
@@ -42,7 +44,9 @@ class LocSystem {
 
     /// 处理点云
     void ProcessLidar(const sensor_msgs::msg::PointCloud2::SharedPtr& cloud);
+#ifdef USE_LIVOX
     void ProcessLidar(const livox_ros_driver2::msg::CustomMsg::SharedPtr& cloud);
+#endif
 
     /// 实时模式下的spin
     void Spin();
@@ -61,11 +65,15 @@ class LocSystem {
 
     std::string imu_topic_;
     std::string cloud_topic_;
+#ifdef USE_LIVOX
     std::string livox_topic_;
+#endif
 
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_ = nullptr;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_ = nullptr;
+#ifdef USE_LIVOX
     rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr livox_sub_ = nullptr;
+#endif
 };
 
 };  // namespace lightning

@@ -32,6 +32,7 @@ void PointCloudPreprocess::Process(const sensor_msgs::msg::PointCloud2 ::SharedP
     *pcl_out = cloud_out_;
 }
 
+#ifdef USE_LIVOX
 void PointCloudPreprocess::Process(const livox_ros_driver2::msg::CustomMsg::SharedPtr &msg,
                                    PointCloudType::Ptr &pcl_out) {
     cloud_out_.clear();
@@ -90,6 +91,7 @@ void PointCloudPreprocess::Process(const livox_ros_driver2::msg::CustomMsg::Shar
     cloud_out_.is_dense = false;
     *pcl_out = cloud_out_;
 }
+#endif
 
 void PointCloudPreprocess::Oust64Handler(const sensor_msgs::msg::PointCloud2::SharedPtr &msg) {
     cloud_out_.clear();

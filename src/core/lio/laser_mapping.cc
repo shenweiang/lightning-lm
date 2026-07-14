@@ -29,8 +29,12 @@ bool LaserMapping::Init(const std::string &config_yaml) {
     eskf_options.max_iterations_ = fasterlio::NUM_MAX_ITERATIONS;
     eskf_options.epsi_ = 1e-3 * Eigen::Matrix<double, ESKF::state_dim_, 1>::Ones();
     eskf_options.lidar_obs_func_ = [this](NavState &s, ESKF::CustomObservationModel &obs) { ObsModel(s, obs); };
+    eskf_options.gps_obs_func_ = [this](NavState &s, ESKF::CustomObservationModel &obs) { GPSObsModel(s, obs); };
     eskf_options.use_aa_ = use_aa_;
     kf_.Init(eskf_options);
+
+    /// 设置 RTK 穿插更新上下文：ImuProcess 在 UndistortPcl 中按时间线顺序处理 RTK 观测
+    p_imu_->SetRTKContext(rtk_noise_ratio_, &current_rtk_);
 
     return true;
 }
@@ -83,6 +87,8 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
         bool use_imu_filter = yaml["fasterlio"]["imu_filter"].as<bool>();
         p_imu_->SetUseIMUFilter(use_imu_filter);
         options_.proj_kfs_ = yaml["fasterlio"]["proj_kfs"].as<bool>();
+
+        rtk_noise_ratio_ = yaml["fasterlio"]["rtk_noise_ratio"].as<double>();
 
     } catch (...) {
         LOG(ERROR) << "bad conversion";
@@ -164,6 +170,16 @@ void LaserMapping::ProcessIMU(const lightning::IMUPtr &imu) {
     last_timestamp_imu_ = timestamp;
 
     imu_buffer_.emplace_back(imu);
+}
+
+void LaserMapping::ProcessRTK(const RTKData &rtk) {
+    UL lock(mtx_buffer_);
+    rtk_buffer_.emplace_back(rtk);
+
+    // 限制队列长度（100Hz × 30s = 3000 帧，留足余量）
+    if (rtk_buffer_.size() > 3000) {
+        rtk_buffer_.pop_front();
+    }
 }
 
 bool LaserMapping::Run() {
@@ -433,6 +449,7 @@ void LaserMapping::ProcessPointCloud2(const sensor_msgs::msg::PointCloud2::Share
         "Preprocess (Standard)");
 }
 
+#ifdef USE_LIVOX
 void LaserMapping::ProcessPointCloud2(const livox_ros_driver2::msg::CustomMsg::SharedPtr &msg) {
     UL lock(mtx_buffer_);
     Timer::Evaluate(
@@ -456,6 +473,7 @@ void LaserMapping::ProcessPointCloud2(const livox_ros_driver2::msg::CustomMsg::S
         },
         "Preprocess (Standard)");
 }
+#endif
 
 void LaserMapping::ProcessPointCloud2(CloudPtr cloud) {
     UL lock(mtx_buffer_);
@@ -535,6 +553,21 @@ bool LaserMapping::SyncPackages() {
     lidar_buffer_.pop_front();
     time_buffer_.pop_front();
     lidar_pushed_ = false;
+
+    /// 收集当前 lidar 帧时间窗口内的 RTK 观测，按时间戳顺序排列
+    measures_.rtk_.clear();
+    {
+        UL lock(mtx_buffer_);
+        while (!rtk_buffer_.empty() && rtk_buffer_.front().timestamp < measures_.lidar_begin_time_) {
+            rtk_buffer_.pop_front();  // 清理过期数据
+        }
+        for (const auto &rtk : rtk_buffer_) {
+            if (rtk.timestamp > measures_.lidar_end_time_) break;
+            if (rtk.timestamp >= measures_.lidar_begin_time_) {
+                measures_.rtk_.push_back(rtk);
+            }
+        }
+    }
 
     // LOG(INFO) << "sync: " << std::setprecision(14) << measures_.lidar_begin_time_ << ", " <<
     // measures_.lidar_end_time_;
@@ -848,6 +881,49 @@ CloudPtr LaserMapping::GetGlobalMap(bool use_lio_pose, bool use_voxel, float res
     LOG(INFO) << "global map: " << global_map_filtered->size();
 
     return global_map_filtered;
+}
+
+void LaserMapping::GPSObsModel(NavState &s, ESKF::CustomObservationModel &obs) {
+    // S1: 输入校验 —— 防止 NaN/Inf 污染 ESKF 状态
+    if (!current_rtk_.position.allFinite() || !current_rtk_.orientation.coeffs().allFinite()) {
+        LOG(WARNING) << "[GPSObsModel] RTK 数据含 NaN/Inf，跳过本次更新";
+        obs.valid_ = false;
+        return;
+    }
+
+    // 位置残差：ENU 坐标系下直接做向量差
+    Vec3d r_pos = current_rtk_.position - s.pos_;
+
+    // 姿态残差：SO(3) Log 映射，计算 state 到 RTK 的相对旋转
+    SO3 rot_s(s.rot_);
+    SO3 rot_rtk(current_rtk_.orientation);
+    SO3 delta_rot = rot_s.inverse() * rot_rtk;
+    Vec3d r_rot = delta_rot.log();
+
+    // S2: 旋转差接近 π 时对数映射导数奇异，退化姿态分量避免残差跳变
+    double rot_angle = r_rot.norm();
+    if (rot_angle > M_PI * 0.8) {
+        LOG(WARNING) << "[GPSObsModel] 旋转差过大: " << rot_angle * 180.0 / M_PI << "°, 退化姿态分量";
+        r_rot.setZero();
+    }
+
+    // 信息权重：各维度的逆噪声方差
+    //   位置噪声 ~0.02m → info ≈ 2500; 姿态噪声 ~0.005rad → info ≈ 40000
+    // S5: 防止除零 —— pos_std/rot_std 为零（默认构造或协方差异常）时产生 inf
+    constexpr double kMinStd = 1e-6;
+    Vec3d info_pos(1.0 / (std::max(current_rtk_.pos_std.x(), kMinStd) * std::max(current_rtk_.pos_std.x(), kMinStd)),
+                   1.0 / (std::max(current_rtk_.pos_std.y(), kMinStd) * std::max(current_rtk_.pos_std.y(), kMinStd)),
+                   1.0 / (std::max(current_rtk_.pos_std.z(), kMinStd) * std::max(current_rtk_.pos_std.z(), kMinStd)));
+    Vec3d info_rot(1.0 / (std::max(current_rtk_.rot_std.x(), kMinStd) * std::max(current_rtk_.rot_std.x(), kMinStd)),
+                   1.0 / (std::max(current_rtk_.rot_std.y(), kMinStd) * std::max(current_rtk_.rot_std.y(), kMinStd)),
+                   1.0 / (std::max(current_rtk_.rot_std.z(), kMinStd) * std::max(current_rtk_.rot_std.z(), kMinStd)));
+
+    // H^T * W * H = W（GPS 观测的 H 对位姿维度为单位阵）
+    obs.HTH_.setZero();
+    obs.HTH_.diagonal() << info_pos, info_rot;
+
+    // H^T * W * r = W * r（信息加权后的残差）
+    obs.HTr_ << info_pos.cwiseProduct(r_pos), info_rot.cwiseProduct(r_rot);
 }
 
 void LaserMapping::SaveMap() {

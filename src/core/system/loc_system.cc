@@ -32,7 +32,9 @@ bool LocSystem::Init(const std::string &yaml_path) {
 
     imu_topic_ = yaml.GetValue<std::string>("common", "imu_topic");
     cloud_topic_ = yaml.GetValue<std::string>("common", "lidar_topic");
+#ifdef USE_LIVOX
     livox_topic_ = yaml.GetValue<std::string>("common", "livox_lidar_topic");
+#endif
 
     rclcpp::QoS qos(10);
 
@@ -52,10 +54,12 @@ bool LocSystem::Init(const std::string &yaml_path) {
             Timer::Evaluate([&]() { ProcessLidar(cloud); }, "Proc Lidar", true);
         });
 
+#ifdef USE_LIVOX
     livox_sub_ = node_->create_subscription<livox_ros_driver2::msg::CustomMsg>(
         livox_topic_, qos, [this](livox_ros_driver2::msg::CustomMsg ::SharedPtr cloud) {
             Timer::Evaluate([&]() { ProcessLidar(cloud); }, "Proc Lidar", true);
         });
+#endif
 
     if (options_.pub_tf_) {
         tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(node_);
@@ -91,11 +95,13 @@ void LocSystem::ProcessLidar(const sensor_msgs::msg::PointCloud2::SharedPtr &clo
     }
 }
 
+#ifdef USE_LIVOX
 void LocSystem::ProcessLidar(const livox_ros_driver2::msg::CustomMsg::SharedPtr &cloud) {
     if (loc_started_) {
         loc_->ProcessLivoxLidarMsg(cloud);
     }
 }
+#endif
 
 void LocSystem::Spin() {
     if (node_ != nullptr) {
