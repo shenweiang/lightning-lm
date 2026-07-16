@@ -11,6 +11,7 @@
 
 #include "core/graph/optimizer.h"
 #include "core/types/edge_se3.h"
+#include "core/types/edge_se3_prior.h"
 
 namespace lightning {
 
@@ -42,6 +43,11 @@ class LoopClosing {
 
         bool with_height_ = true;
         double height_noise_ = 0.1;
+
+        /// RTK 先验边噪声配置（标准差，平方后用于信息矩阵；仅在关键帧自身噪声无效时作为回退值）
+        double rtk_pos_noise_ = 0.1;               // RTK 位置噪声 (m), ~0.1m 保守值
+        double rtk_ang_noise_ = 0.0052;            // RTK 姿态噪声 (rad), ≈0.3°
+        double rtk_outlier_th_ = 10.0;              // RTK 异常值卡方阈值（Cauchy delta）
     };
 
     LoopClosing(Options options = Options()) { options_ = options; }
@@ -70,6 +76,9 @@ class LoopClosing {
     /// 优化位姿
     void PoseOptimization();
 
+    /// 添加 RTK 绝对位姿约束（防守型：防止回环优化拉偏轨迹）
+    void AddRTKFactors();
+
     Options options_;
 
     Keyframe::Ptr last_kf_ = nullptr;
@@ -87,6 +96,7 @@ class LoopClosing {
 
     std::vector<std::shared_ptr<miao::VertexSE3>> kf_vert_;
     std::vector<std::shared_ptr<miao::EdgeSE3>> edge_loops_;
+    std::vector<std::shared_ptr<miao::EdgeSE3Prior>> rtk_edges_;  // RTK 绝对位姿约束边
 
     LoopClosedCallback loop_cb_;
 };

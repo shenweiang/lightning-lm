@@ -51,6 +51,11 @@ void LoopClosing::Init(const std::string yaml_path) {
         options_.max_range_ = yaml.GetValue<double>("loop_closing", "max_range");
         options_.ndt_score_th_ = yaml.GetValue<double>("loop_closing", "ndt_score_th");
         options_.with_height_ = yaml.GetValue<bool>("loop_closing", "with_height");
+
+        /// RTK 先验边噪声（标准差，仅在关键帧自身噪声无效时作为回退值）
+        options_.rtk_pos_noise_ = yaml.GetValue<double>("loop_closing", "rtk_pos_noise");
+        options_.rtk_ang_noise_ = yaml.GetValue<double>("loop_closing", "rtk_ang_noise");
+        options_.rtk_outlier_th_ = yaml.GetValue<double>("loop_closing", "rtk_outlier_th");
     }
 
     if (options_.online_mode_) {
@@ -250,6 +255,49 @@ void LoopClosing::ComputeForCandidate(lightning::LoopCandidate& c) {
     //     "./data/lc_" + std::to_string(c.idx1_) + "_" + std::to_string(c.idx2_) + "_tgt.pcd", *rough_map1);
 }
 
+void LoopClosing::AddRTKFactors() {
+    rtk_edges_.clear();  // 每轮只追踪本轮新增的 RTK 边
+
+    auto v = optimizer_->GetVertex(cur_kf_->GetID());
+    if (v == nullptr || !cur_kf_->HasRTK()) {
+        return;
+    }
+
+    SE3 rtk_pose = cur_kf_->GetRTKPose();
+    Vec3d pos_std = cur_kf_->GetRTKPosStd();
+    Vec3d rot_std = cur_kf_->GetRTKRotStd();
+
+    // 检查噪声有效性：噪声过小或为零说明未正确设置，回退到 YAML 默认值
+    auto safe_pos_std = [&](double s) -> double {
+        return (s > 1e-4) ? s : options_.rtk_pos_noise_;
+    };
+    auto safe_rot_std = [&](double s) -> double {
+        return (s > 1e-4) ? s : options_.rtk_ang_noise_;
+    };
+
+    // 用 RTK 实际协方差构建信息矩阵（噪声过大的 RTK 自动降权）
+    Mat6d rtk_info = Mat6d::Zero();
+    rtk_info(0, 0) = 1.0 / (safe_pos_std(pos_std.x()) * safe_pos_std(pos_std.x()));
+    rtk_info(1, 1) = 1.0 / (safe_pos_std(pos_std.y()) * safe_pos_std(pos_std.y()));
+    rtk_info(2, 2) = 1.0 / (safe_pos_std(pos_std.z()) * safe_pos_std(pos_std.z()));
+    rtk_info(3, 3) = 1.0 / (safe_rot_std(rot_std.x()) * safe_rot_std(rot_std.x()));
+    rtk_info(4, 4) = 1.0 / (safe_rot_std(rot_std.y()) * safe_rot_std(rot_std.y()));
+    rtk_info(5, 5) = 1.0 / (safe_rot_std(rot_std.z()) * safe_rot_std(rot_std.z()));
+
+    auto e = std::make_shared<miao::EdgeSE3Prior>();
+    e->SetVertex(0, v);
+    e->SetMeasurement(rtk_pose);
+    e->SetInformation(rtk_info);
+
+    // Cauchy 鲁棒核：防止 RTK 跳变污染全局优化
+    auto rk = std::make_shared<miao::RobustKernelCauchy>();
+    rk->SetDelta(options_.rtk_outlier_th_);
+    e->SetRobustKernel(rk);
+
+    optimizer_->AddEdge(e);
+    rtk_edges_.emplace_back(e);
+}
+
 void LoopClosing::PoseOptimization() {
     auto v = std::make_shared<miao::VertexSE3>();
     v->SetId(cur_kf_->GetID());
@@ -283,6 +331,9 @@ void LoopClosing::PoseOptimization() {
         optimizer_->AddEdge(e);
     }
 
+    /// RTK 绝对位姿约束（防守型：RTK 边累积在图中，仅当回环触发优化时参与约束）
+    AddRTKFactors();
+
     /// 回环的约束
     for (auto& c : candidates_) {
         auto e = std::make_shared<miao::EdgeSE3>();
@@ -312,7 +363,7 @@ void LoopClosing::PoseOptimization() {
 
     optimizer_->Optimize(20);
 
-    /// remove outliers
+    /// remove outliers (回环边)
     int cnt_outliers = 0;
     for (auto& e : edge_loops_) {
         if (e->GetRobustKernel() == nullptr) {
@@ -329,6 +380,25 @@ void LoopClosing::PoseOptimization() {
 
     if (options_.verbose_) {
         LOG(INFO) << "loop outliers: " << cnt_outliers << "/" << edge_loops_.size();
+    }
+
+    /// remove outliers (RTK 先验边)
+    int cnt_rtk_outliers = 0;
+    for (auto& e : rtk_edges_) {
+        if (e->GetRobustKernel() == nullptr) {
+            continue;
+        }
+
+        if (e->Chi2() > options_.rtk_outlier_th_) {
+            e->SetLevel(1);
+            cnt_rtk_outliers++;
+        } else {
+            e->SetRobustKernel(nullptr);
+        }
+    }
+
+    if (options_.verbose_) {
+        LOG(INFO) << "rtk outliers: " << cnt_rtk_outliers << "/" << rtk_edges_.size();
     }
 
     /// get results

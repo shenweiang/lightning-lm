@@ -91,7 +91,7 @@ bool SlamSystem::Init(const std::string& yaml_path) {
         livox_topic_ = yaml["common"]["livox_lidar_topic"].as<std::string>();
 #endif
         rtk_topic_ = yaml["common"]["rtk_topic"].as<std::string>();
-        rtk_rot_noise_ = yaml["common"]["rtk_rot_noise"].as<double>();
+        rtk_rot_noise_ = yaml["fasterlio"]["rtk_rot_noise"].as<double>();
 
         rclcpp::QoS qos(10);
         // qos.best_effort();

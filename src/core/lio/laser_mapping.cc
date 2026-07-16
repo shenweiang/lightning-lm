@@ -390,6 +390,15 @@ void LaserMapping::MakeKF() {
 
     kf->SetState(state_point_);
 
+    // 关联最近的 RTK 观测到关键帧
+    // current_rtk_ 在 UndistortPcl() 中已被设置为 lidar 时间窗内最新的 RTK 观测
+    if (current_rtk_.timestamp > 0 && current_rtk_.position.allFinite()) {
+        double dt = std::abs(state_point_.timestamp_ - current_rtk_.timestamp);
+        if (dt < 0.5) {  // 0.5s 内认为有效
+            kf->SetRTKData(current_rtk_);
+        }
+    }
+
     LOG(INFO) << "LIO: create kf " << kf->GetID() << ", state: " << state_point_.pos_.transpose()
               << ", kf opt pose: " << kf->GetOptPose().translation().transpose()
               << ", lio pose: " << kf->GetLIOPose().translation().transpose() << ", time: " << std::setprecision(14)
