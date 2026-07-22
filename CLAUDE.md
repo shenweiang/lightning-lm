@@ -279,7 +279,7 @@ ros2 service call /lightning/save_map lightning/srv/SaveMap "{map_id: new_map}"
 - **状态维度**：ESKF 状态变量为 12 维（pos 3 + rot 3 + vel 3 + bg 3），ba（加速度计零偏）和 grav（重力）不参与在线估计。这是 2026.4.2 更新后的设计
 - **坐标系统**：使用 Sophus SE3/SO3 表示刚体变换，`WGlobal_T_WLocal` 为全局到局部的变换
 - **时间戳处理**：`fasterlio.time_scale` 参数对 Velodyne 雷达敏感，用于兼容不同数据集的时间戳单位（1e-3 对应微秒转毫秒）
-- **雷达类型**：`fasterlio.lidar_type` — 1=Livox, 2=Velodyne, 3=Ouster，不同雷达的点云预处理路径不同
+- **雷达类型**：`fasterlio.lidar_type` — 1=Livox, 2=Velodyne, 3=Ouster, 4=RoboSense, 5=LeiShen，不同雷达的点云预处理路径不同
 - **回环检测**：使用优化后的位姿作为检测初值，`with_height` 配置高度约束（适用于平面场景，不适用多层室内）
 - **并发模型**：激光匹配使用 OpenMP 并行（NDT-OMP、VoxelGrid-OMP），`std::vector<bool>` 在并行化时有坑（已修复）
 - **数值稳定性**：ESKF 对协方差 P 阵做对称化处理和保护最小值，防止数值发散
@@ -337,7 +337,7 @@ docker build -t lightning-lm .
 
 ## 11. 新增传感器/数据集适配流程
 
-1. 确认雷达类型，设置 `fasterlio.lidar_type`
+1. 确认雷达类型，设置 `fasterlio.lidar_type`（1=Livox, 2=Velodyne, 3=Ouster, 4=RoboSense, 5=LeiShen）
 2. 修改 `common.lidar_topic` 和 `common.imu_topic` 为实际话题名
 3. 检查 `fasterlio.time_scale` 时间戳单位
 4. 先用离线模式调试参数，通过后再调在线模式
@@ -1131,3 +1131,146 @@ ros2 run lightning run_slam_offline --config ./config/default.yaml --input_bag <
 # - 长直路段无回环时是否漂移
 # - GPS 短暂丢失后恢复能力
 ```
+
+---
+
+## 14. LeiShen（镭神）激光雷达适配
+
+### 14.1 背景
+
+上游 `merge_cloud` 节点（`~/CS-Y2630-AD/src/localization/match/lidar_match/multi_lidar_merge/`）将 2-3 台激光雷达融合后，输出 `sensor_msgs::msg::PointCloud2`，点云格式为 `lslidar_driver::PointXYZIRT`：
+
+```cpp
+namespace lslidar_driver {
+struct EIGEN_ALIGN16 PointXYZIRT {
+    PCL_ADD_POINT4D;     // x, y, z (float)
+    PCL_ADD_INTENSITY;   // intensity (float)
+    std::uint16_t ring;  // 线号
+    float time;          // 相对时间 (秒)
+};
+}
+```
+
+lightning-lm 需要在 `pointcloud_preprocess` 中新增此格式的反序列化支持。
+
+### 14.2 与现有格式对比
+
+| 字段 | LeiShen (`PointXYZIRT`) | Velodyne (`Point`) | lightning (`PointType`) |
+|------|------------------------|---------------------|------------------------|
+| x/y/z | float | float | float |
+| intensity | float | float | float |
+| ring | uint16_t | uint16_t | —（不保留）|
+| time | float（秒） | float | double（毫秒）|
+
+格式与 Velodyne 几乎一致（都有 ring + per-point time），区别仅在于 namespace。LeiShen 总是带有时戳，无需 Velodyne 的 `given_offset_time_` 回退逻辑。
+
+### 14.3 实现方案
+
+**涉及文件（共 2 个）**：
+
+| 文件 | 改动类型 | 说明 |
+|------|----------|------|
+| `common/point_def.h` | 修改 | 新增 `lslidar_driver::PointXYZIRT` 结构体 + `POINT_CLOUD_REGISTER_POINT_STRUCT` |
+| `core/lio/pointcloud_preprocess.h/cc` | 修改 | 新增 `LidarType::LEISHEN = 5` + `LeiShenHandler` + `Process()` switch |
+
+**注意**：`merge_cloud` 已在外部将多雷达融合并转换到车体坐标系，lightning-lm 不需要了解雷达外参，只需直接使用融合后的点云。
+
+#### 改动 A：`point_def.h` — 新增 LeiShen 点云结构体
+
+```cpp
+// 在 velodyne_ros::Point 定义附近新增
+namespace lslidar_driver {
+struct EIGEN_ALIGN16 PointXYZIRT {
+    PCL_ADD_POINT4D;
+    PCL_ADD_INTENSITY;
+    std::uint16_t ring;
+    float time;
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+};
+}  // namespace lslidar_driver
+
+// clang-format off
+POINT_CLOUD_REGISTER_POINT_STRUCT(lslidar_driver::PointXYZIRT,
+                                  (float, x, x)
+                                  (float, y, y)
+                                  (float, z, z)
+                                  (float, intensity, intensity)
+                                  (std::uint16_t, ring, ring)
+                                  (float, time, time))
+// clang-format on
+```
+
+#### 改动 B：`pointcloud_preprocess.h` — LidarType 枚举
+
+```cpp
+enum class LidarType { AVIA = 1, VELO32 = 2, OUST64 = 3, ROBOSENSE = 4, LEISHEN = 5 };
+```
+
+新增方法声明：
+
+```cpp
+void LeiShenHandler(const sensor_msgs::msg::PointCloud2::SharedPtr &msg);
+```
+
+#### 改动 C：`pointcloud_preprocess.cc` — 实现 LeiShenHandler
+
+```cpp
+void PointCloudPreprocess::LeiShenHandler(const sensor_msgs::msg::PointCloud2::SharedPtr &msg) {
+    cloud_out_.clear();
+    cloud_full_.clear();
+
+    pcl::PointCloud<lslidar_driver::PointXYZIRT> pl_orig;
+    pcl::fromROSMsg(*msg, pl_orig);
+    int plsize = pl_orig.size();
+    cloud_out_.reserve(plsize);
+
+    for (int i = 0; i < plsize; i++) {
+        if (i % point_filter_num_ != 0) {
+            continue;
+        }
+
+        double range = pl_orig.points[i].x * pl_orig.points[i].x +
+                       pl_orig.points[i].y * pl_orig.points[i].y +
+                       pl_orig.points[i].z * pl_orig.points[i].z;
+
+        if (range < (blind_ * blind_)) {
+            continue;
+        }
+
+        if (pl_orig.points[i].z < height_min_ || pl_orig.points[i].z > height_max_) {
+            continue;
+        }
+
+        PointType added_pt;
+        added_pt.x = pl_orig.points[i].x;
+        added_pt.y = pl_orig.points[i].y;
+        added_pt.z = pl_orig.points[i].z;
+        added_pt.intensity = pl_orig.points[i].intensity;
+        // time: float 秒 → double 毫秒
+        added_pt.time = static_cast<double>(pl_orig.points[i].time) * 1e3;
+
+        cloud_out_.points.push_back(added_pt);
+    }
+
+    cloud_out_.width = cloud_out_.size();
+    cloud_out_.height = 1;
+    cloud_out_.is_dense = false;
+}
+```
+
+#### 改动 D：`Process()` switch 新增分支
+
+```cpp
+case LidarType::LEISHEN:
+    LeiShenHandler(msg);
+    break;
+```
+
+### 14.4 关键设计决策
+
+| 决策 | 理由 |
+|------|------|
+| 复用 Velodyne 的 `time_scale` 配置 | LeiShen 的 `time` 字段是 float 秒，`time_scale` 默认 1.0（即 1 秒 = 1000ms），与单位换算一致 |
+| 无 `given_offset_time_` 回退 | LeiShen 总是输出 per-point timestamps |
+| 排除在 `merge_cloud` 已完成外参融合 | lightning-lm 直接使用融合后点云，雷达间外参对 LIO 透明 |
+| 使用 `lslidar_driver` namespace | 与上游 `merge_cloud.hpp` 保持一致，`pcl::fromROSMsg` 按字段名自动匹配 |
