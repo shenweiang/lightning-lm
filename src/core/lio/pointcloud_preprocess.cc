@@ -25,6 +25,10 @@ void PointCloudPreprocess::Process(const sensor_msgs::msg::PointCloud2 ::SharedP
             RoboSenseHandler(msg);
             break;
 
+        case LidarType::LEISHEN:
+            LeiShenHandler(msg);
+            break;
+
         default:
             LOG(ERROR) << "Error LiDAR Type";
             break;
@@ -253,6 +257,51 @@ void PointCloudPreprocess::VelodyneHandler(const sensor_msgs::msg::PointCloud2::
                 cloud_out_.points.push_back(added_pt);
             }
         }
+    }
+
+    cloud_out_.width = cloud_out_.size();
+    cloud_out_.height = 1;
+    cloud_out_.is_dense = false;
+}
+
+void PointCloudPreprocess::LeiShenHandler(const sensor_msgs::msg::PointCloud2::SharedPtr &msg) {
+    // 镭神激光雷达点云预处理
+    // 与 Velodyne 格式类似（x/y/z/intensity/ring/time），但 time 字段单位为 float 秒
+    // 注意：不使用 time_scale_（LeiShen 时间单位固定为秒），直接 * 1e3 转为毫秒
+    cloud_out_.clear();
+    cloud_full_.clear();
+
+    pcl::PointCloud<lightning::LeiShenPoint> pl_orig;
+    pcl::fromROSMsg(*msg, pl_orig);
+    int plsize = pl_orig.size();
+    cloud_out_.reserve(plsize);
+
+    for (int i = 0; i < plsize; i++) {
+        if (i % point_filter_num_ != 0) {
+            continue;
+        }
+
+        double range = pl_orig.points[i].x * pl_orig.points[i].x +
+                       pl_orig.points[i].y * pl_orig.points[i].y +
+                       pl_orig.points[i].z * pl_orig.points[i].z;
+
+        if (range < (blind_ * blind_)) {
+            continue;
+        }
+
+        if (pl_orig.points[i].z < height_min_ || pl_orig.points[i].z > height_max_) {
+            continue;
+        }
+
+        PointType added_pt;
+        added_pt.x = pl_orig.points[i].x;
+        added_pt.y = pl_orig.points[i].y;
+        added_pt.z = pl_orig.points[i].z;
+        added_pt.intensity = pl_orig.points[i].intensity;
+        // time: float 秒 → double 毫秒（固定 ×1e3，不依赖 time_scale_）
+        added_pt.time = static_cast<double>(pl_orig.points[i].time) * 1e3;
+
+        cloud_out_.points.push_back(added_pt);
     }
 
     cloud_out_.width = cloud_out_.size();

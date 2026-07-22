@@ -65,6 +65,9 @@ class Localization {
     /// 处理RTK/INS观测数据（已转换至 ENU 坐标系）
     void ProcessRTKMsg(const RTKData& rtk);
 
+    /// 设置 IMU→base_link 杆臂外参（用于 TF 输出时补偿杆臂）
+    void SetTImuBase(const SE3& T_imu_base) { T_imu_base_ = T_imu_base; }
+
     // void ProcessOdomMsg(const nav_msgs::msg::Odometry::SharedPtr odom_msg) override;
 
     /// 由外部设置pose，适用于手动重定位
@@ -127,6 +130,9 @@ class Localization {
     LocStateCallback loc_state_callback_;
     PointcloudBodyCallback pointcloud_body_callback_;
     PointcloudWorldCallback pointcloud_world_callback_;
+
+    /// IMU→base_link 杆臂外参（默认 Identity，向后兼容）
+    SE3 T_imu_base_ = SE3();
 
     /// 输入检查
     double last_imu_time_ = 0;

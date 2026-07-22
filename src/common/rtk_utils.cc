@@ -180,6 +180,16 @@ bool RTKConverter::Convert(const nav_msgs::msg::Odometry& msg, RTKData& rtk) {
                         std::sqrt(std::max(var_z, 1e-6)));
     rtk.rot_std = Vec3d(options_.rot_noise, options_.rot_noise, options_.rot_noise);
 
+    // 7.5. IMU→base_link 杆臂补偿：将 RTK 位姿从 base_link 转到 imu_link
+    //       T_ENU_imu = T_ENU_base * T_imu_base  (SE3 右乘)
+    //       R_imu = R_base * R,  p_imu = p_base + R_base * t
+    //       其中 t = T_imu_base.translation()（IMU 原点在 base_link 系下的位置向量）
+    //       例：T_imu_base = [1.5, 0.3, 0.6] 表示 IMU 在车体前方 1.5m、左方 0.3m、上方 0.6m
+    if (!T_imu_base_.matrix().isIdentity(1e-10)) {
+        rtk.position = rtk.position + rtk.orientation * T_imu_base_.translation();
+        rtk.orientation = rtk.orientation * T_imu_base_.so3().unit_quaternion();
+    }
+
     // 8. RTK 位置跳变检测 —— fix 丢失时 INS 积分漂移可产生数米跳变
     if (last_valid_rtk_.timestamp > 0) {
         double jump = (rtk.position - last_valid_rtk_.position).norm();

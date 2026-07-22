@@ -69,6 +69,25 @@ class YAML_IO {
         return default_val;
     }
 
+    /// 检查某个 node 下的 key 是否存在（用于可选配置项的前置判断）
+    bool Exist(const std::string &node, const std::string &key) const {
+        assert(is_opened_);
+        return yaml_node_[node] && yaml_node_[node][key];
+    }
+
+    /// 读取 std::vector 类型的 YAML 序列（如 [x, y, z]）
+    template <typename T>
+    std::vector<T> GetStdVector(const std::string &node, const std::string &key) const {
+        assert(is_opened_);
+        std::vector<T> result;
+        if (yaml_node_[node] && yaml_node_[node][key]) {
+            for (const auto& v : yaml_node_[node][key]) {
+                result.push_back(v.as<T>());
+            }
+        }
+        return result;
+    }
+
     /// 设定类型为T的参数值
     template <typename T>
     void SetValue(const std::string &key, const T &value) {

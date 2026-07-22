@@ -91,10 +91,15 @@ class RTKConverter {
     /// 设置姿态噪声（从 YAML 读取后调用）
     void SetRotNoise(double noise) { options_.rot_noise = noise; }
 
+    /// 设置 IMU→base_link 杆臂外参（从 YAML 读取后调用）
+    /// @param T_imu_base IMU 坐标系到 base_link 坐标系的 SE3 变换（仅平移分量有效，旋转分量假设为 Identity）
+    void SetTImuBase(const SE3& T_imu_base) { T_imu_base_ = T_imu_base; }
+
    private:
     Options options_;
     MapOrigin origin_;
     RTKData last_valid_rtk_;
+    SE3 T_imu_base_ = SE3();  ///< IMU→base_link 杆臂外参（默认 Identity，向后兼容）
 
     // 中值滤波缓冲（原点未就绪时累积，就绪后不再使用）
     int origin_init_count_ = 0;

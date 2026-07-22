@@ -81,6 +81,29 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(ouster_ros::Point,
 )
 // clang-format on
 
+/// 镭神（LeiShen）激光雷达点云结构体
+/// 注意：放在 lightning 命名空间下而非 lslidar_driver，避免与官方 SDK 的
+/// POINT_CLOUD_REGISTER_POINT_STRUCT 产生 ODR 冲突（pcl::fromROSMsg 按字段名匹配）
+namespace lightning {
+struct EIGEN_ALIGN16 LeiShenPoint {
+    PCL_ADD_POINT4D;
+    PCL_ADD_INTENSITY;
+    std::uint16_t ring;
+    float time;  // 相对时间，单位：秒
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+};
+}  // namespace lightning
+
+// clang-format off
+POINT_CLOUD_REGISTER_POINT_STRUCT(lightning::LeiShenPoint,
+                                  (float, x, x)
+                                  (float, y, y)
+                                  (float, z, z)
+                                  (float, intensity, intensity)
+                                  (std::uint16_t, ring, ring)
+                                  (float, time, time))
+// clang-format on
+
 namespace lightning {
 
 /// 各类点云的缩写

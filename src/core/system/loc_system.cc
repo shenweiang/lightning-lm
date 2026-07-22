@@ -76,6 +76,17 @@ bool LocSystem::Init(const std::string &yaml_path) {
     rtk_rot_noise_ = yaml.GetValue<double>("fasterlio", "rtk_rot_noise", 0.0052);
     rtk_converter_.SetRotNoise(rtk_rot_noise_);
 
+    // 读取 IMU→base_link 杆臂外参（可选，默认零杆臂）
+    Vec3d T_imu_base_vec(0, 0, 0);
+    if (yaml.Exist("common", "T_imu_base")) {
+        auto t = yaml.GetStdVector<double>("common", "T_imu_base");
+        if (t.size() == 3) {
+            T_imu_base_vec = Vec3d(t[0], t[1], t[2]);
+            rtk_converter_.SetTImuBase(SE3(SO3(), T_imu_base_vec));
+            LOG(INFO) << "loc: T_imu_base = " << T_imu_base_vec.transpose();
+        }
+    }
+
     if (!rtk_topic_.empty()) {
         rtk_sub_ = node_->create_subscription<nav_msgs::msg::Odometry>(
             rtk_topic_, qos, [this](nav_msgs::msg::Odometry::SharedPtr msg) { ProcessRTK(msg); });
@@ -92,6 +103,8 @@ bool LocSystem::Init(const std::string &yaml_path) {
 
     bool ret = loc_->Init(yaml_path, map_path);
     if (ret) {
+        // 传递 IMU→base_link 杆臂外参到定位模块（用于 TF 输出补偿）
+        loc_->SetTImuBase(SE3(SO3(), T_imu_base_vec));
         LOG(INFO) << "online loc node has been created.";
     }
 

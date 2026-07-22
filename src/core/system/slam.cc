@@ -95,6 +95,16 @@ bool SlamSystem::Init(const std::string& yaml_path) {
         rtk_rot_noise_ = yaml["fasterlio"]["rtk_rot_noise"].as<double>();
         rtk_converter_.SetRotNoise(rtk_rot_noise_);
 
+        // 读取 IMU→base_link 杆臂外参（可选，默认零杆臂）
+        if (yaml["common"]["T_imu_base"]) {
+            auto t = yaml["common"]["T_imu_base"];
+            if (t.IsSequence() && t.size() == 3) {
+                Vec3d translation(t[0].as<double>(), t[1].as<double>(), t[2].as<double>());
+                rtk_converter_.SetTImuBase(SE3(SO3(), translation));
+                LOG(INFO) << "slam: T_imu_base = " << translation.transpose();
+            }
+        }
+
         rclcpp::QoS qos(10);
         // qos.best_effort();
 

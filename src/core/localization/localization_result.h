@@ -52,7 +52,9 @@ struct LocalizationResult {
     double dr_delta_t_ = 0;          // 相对于上一帧DR消息的时延
     double is_parking_ = false;
 
-    geometry_msgs::msg::TransformStamped ToGeoMsg() const;  // 转到geometry msg
+    /// 转换为 geometry_msgs::TransformStamped
+    /// @param T_imu_base 可选的 IMU→base_link 杆臂外参（默认 Identity 不做变换）
+    geometry_msgs::msg::TransformStamped ToGeoMsg(const SE3& T_imu_base = SE3()) const;
     NavState ToNavState() const;                            // 转到navstate
 };
 

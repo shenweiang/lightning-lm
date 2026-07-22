@@ -5,6 +5,8 @@ common:
   livox_lidar_topic: "/livox/lidar"
   imu_topic: "/livox/imu"
   rtk_topic: "/sensing/ins/ins_raw"
+  T_imu_base: [0.0, 0.0, 0.0]  # IMU→base_link 杆臂 (m)，[x, y, z]，默认零杆臂
+                               # 假设 IMU 和 base_link 方向已由双天线 INS 标定对齐（旋转分量 = Identity）
 
 # fasterlio 参数
 fasterlio:
@@ -33,7 +35,9 @@ fasterlio:
   b_acc_cov: 0.0001
   b_gyr_cov: 0.0001
   extrinsic_est_en: false      # true: enable the online estimation of IMU-LiDAR extrinsic
-  extrinsic_T: [ 0, 0, 0.28 ]
+  extrinsic_T: [ 0, 0, 0.28 ]  # sensor(LiDAR或base_link)在IMU系下的位置
+                               # 标准LiDAR：LiDAR在IMU下的位置（T_imu_lidar.translation）
+                               # LeiShen/merge_cloud：base_link在IMU下的位置 = -T_imu_base.translation
   extrinsic_R: [ 1, 0, 0,
                  0, 1, 0,
                  0, 0, 1 ]

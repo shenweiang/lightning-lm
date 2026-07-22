@@ -96,7 +96,7 @@ bool Localization::Init(const std::string& yaml_path, const std::string& global_
         loc_result_ = res;
 
         if (tf_callback_ && loc_result_.valid_) {
-            tf_callback_(loc_result_.ToGeoMsg());
+            tf_callback_(loc_result_.ToGeoMsg(T_imu_base_));
         }
 
         if (ui_) {
@@ -129,7 +129,10 @@ bool Localization::Init(const std::string& yaml_path, const std::string& global_
         LOG(INFO) << "Using OUST 64 Lidar";
     } else if (lidar_type == 4) {
         preprocess_->SetLidarType(LidarType::ROBOSENSE);
-        LOG(INFO) << "Using OUST 64 Lidar";
+        LOG(INFO) << "Using RoboSense Lidar";
+    } else if (lidar_type == 5) {
+        preprocess_->SetLidarType(LidarType::LEISHEN);
+        LOG(INFO) << "Using LeiShen Lidar";
     } else {
         LOG(WARNING) << "unknown lidar_type";
     }
