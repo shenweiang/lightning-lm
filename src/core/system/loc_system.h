@@ -6,6 +6,7 @@
 #define LIGHTNING_LOC_SYSTEM_H
 
 #include <tf2_ros/transform_broadcaster.h>
+#include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -17,6 +18,7 @@
 #include "common/eigen_types.h"
 #include "common/imu.h"
 #include "common/keyframe.h"
+#include "common/rtk_utils.h"
 
 namespace lightning {
 
@@ -48,6 +50,9 @@ class LocSystem {
     void ProcessLidar(const livox_ros_driver2::msg::CustomMsg::SharedPtr& cloud);
 #endif
 
+    /// 处理RTK/INS观测数据（LLA 解码 → ENU 转换 → 送入定位模块）
+    void ProcessRTK(const nav_msgs::msg::Odometry::SharedPtr& msg);
+
     /// 实时模式下的spin
     void Spin();
 
@@ -74,6 +79,14 @@ class LocSystem {
 #ifdef USE_LIVOX
     rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr livox_sub_ = nullptr;
 #endif
+
+    std::string rtk_topic_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr rtk_sub_ = nullptr;
+
+    /// RTK 坐标转换器（LLA→UTM→ENU + 原点初始化 + 跳变检测）
+    RTKConverter rtk_converter_;
+
+    double rtk_rot_noise_ = 0.0052;  ///< RTK 姿态观测噪声 (rad)，默认 0.3°，从 YAML 读取
 };
 
 };  // namespace lightning

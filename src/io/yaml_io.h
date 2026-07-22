@@ -39,12 +39,34 @@ class YAML_IO {
         T res = yaml_node_[node][key].as<T>();
         return res;
     }
+
+    /// 读取两层yaml参数，键不存在时返回默认值（避免抛异常，适用于可选配置项）
+    template <typename T>
+    T GetValue(const std::string &node, const std::string &key, const T &default_val) const {
+        assert(is_opened_);
+        if (yaml_node_[node] && yaml_node_[node][key]) {
+            return yaml_node_[node][key].as<T>();
+        }
+        return default_val;
+    }
+
     // 读取三层yaml参数
     template <typename T>
     T GetValue(const std::string &node_1, const std::string &node_2, const std::string &key) const {
         assert(is_opened_);
         T res = yaml_node_[node_1][node_2][key].as<T>();
         return res;
+    }
+
+    /// 读取三层yaml参数，键不存在时返回默认值（避免抛异常，适用于可选配置项）
+    template <typename T>
+    T GetValue(const std::string &node_1, const std::string &node_2, const std::string &key,
+               const T &default_val) const {
+        assert(is_opened_);
+        if (yaml_node_[node_1] && yaml_node_[node_1][node_2] && yaml_node_[node_1][node_2][key]) {
+            return yaml_node_[node_1][node_2][key].as<T>();
+        }
+        return default_val;
     }
 
     /// 设定类型为T的参数值

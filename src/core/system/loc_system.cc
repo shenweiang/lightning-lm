@@ -3,6 +3,10 @@
 //
 
 #include "core/system/loc_system.h"
+
+#include <filesystem>
+
+#include "common/rtk_data.h"
 #include "core/localization/localization.h"
 #include "io/yaml_io.h"
 #include "wrapper/ros_utils.h"
@@ -61,6 +65,25 @@ bool LocSystem::Init(const std::string &yaml_path) {
         });
 #endif
 
+    // 尝试从地图目录加载地理原点（建图时保存的 georeference.yaml）
+    std::string geo_path = map_path + "georeference.yaml";
+    if (!rtk_converter_.LoadOrigin(geo_path) && std::filesystem::exists(geo_path)) {
+        LOG(WARNING) << "loc: georeference.yaml 存在但解析失败，将使用运行时原点初始化";
+    }
+
+    // 订阅 RTK 话题（可选，未配置时跳过）
+    rtk_topic_ = yaml.GetValue<std::string>("common", "rtk_topic", std::string(""));
+    rtk_rot_noise_ = yaml.GetValue<double>("fasterlio", "rtk_rot_noise", 0.0052);
+    rtk_converter_.SetRotNoise(rtk_rot_noise_);
+
+    if (!rtk_topic_.empty()) {
+        rtk_sub_ = node_->create_subscription<nav_msgs::msg::Odometry>(
+            rtk_topic_, qos, [this](nav_msgs::msg::Odometry::SharedPtr msg) { ProcessRTK(msg); });
+        LOG(INFO) << "loc: subscribed to RTK topic: " << rtk_topic_;
+    } else {
+        LOG(INFO) << "loc: no RTK topic configured, skipping";
+    }
+
     if (options_.pub_tf_) {
         tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(node_);
         loc_->SetTFCallback(
@@ -106,6 +129,17 @@ void LocSystem::ProcessLidar(const livox_ros_driver2::msg::CustomMsg::SharedPtr 
 void LocSystem::Spin() {
     if (node_ != nullptr) {
         spin(node_);
+    }
+}
+
+void LocSystem::ProcessRTK(const nav_msgs::msg::Odometry::SharedPtr& msg) {
+    RTKData rtk;
+    if (rtk_converter_.Convert(*msg, rtk)) {
+        // 仅定位已启动时才转发 RTK 到 LIO（避免 ESKF 未初始化时误注入）
+        // 原点初始化由 RTKConverter 内部独立完成，不受 loc_started_ 影响
+        if (loc_started_) {
+            loc_->ProcessRTKMsg(rtk);
+        }
     }
 }
 

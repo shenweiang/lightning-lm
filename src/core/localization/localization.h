@@ -4,6 +4,7 @@
 #include "std_msgs/msg/int32.hpp"
 
 #include "common/imu.h"
+#include "common/rtk_data.h"
 #include "core/lio/laser_mapping.h"
 #include "core/localization/localization_result.h"
 #include "core/system/async_message_process.h"
@@ -60,6 +61,9 @@ class Localization {
 
     /// 处理IMU消息
     void ProcessIMUMsg(IMUPtr imu);
+
+    /// 处理RTK/INS观测数据（已转换至 ENU 坐标系）
+    void ProcessRTKMsg(const RTKData& rtk);
 
     // void ProcessOdomMsg(const nav_msgs::msg::Odometry::SharedPtr odom_msg) override;
 
