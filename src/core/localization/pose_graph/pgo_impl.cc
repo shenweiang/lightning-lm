@@ -57,6 +57,7 @@ PGOImpl::PGOImpl(Options options) {
     set6dnoise(lidar_loc_noise_, options_.lidar_loc_pos_noise, options_.lidar_loc_ang_noise);
     set6dnoise(lidar_odom_rel_noise_, options_.lidar_odom_pos_noise, options_.lidar_odom_ang_noise);
     set6dnoise(dr_rel_noise_, options_.dr_pos_noise, options_.dr_ang_noise);
+    set6dnoise(rtk_noise_, options_.rtk_pos_noise, options_.rtk_ang_noise);
 
     // Setup solver
     miao::OptimizerConfig config(miao::AlgorithmType::LEVENBERG_MARQUARDT,
@@ -115,6 +116,9 @@ void PGOImpl::AddPGOFrame(std::shared_ptr<PGOFrame> pgo_frame) {
     // 由于到达时间可能不一致，最好是插到正确的位置（仅限多线程，单线程没这问题）
     // 2023-02-16：在唯一触发源唯一的情况下，无需考虑到达时间不一致问题
     frames_.emplace_back(pgo_frame);
+
+    // 为当前 PGO 帧插值 RTK 位姿（is_in_map_ 已确认，在优化前做插值）
+    AssignRTKPoseIfNeeded(pgo_frame);
 
     /// 触发一次优化
     RunOptimization();
@@ -245,6 +249,15 @@ void PGOImpl::RunOptimization() {
     optimizer_->SetVerbose(options_.verbose_);
     optimizer_->Optimize(5);
 
+    // 将 RTK 边的卡方误差写回到 PGOFrame（用于后续 outlier 判断和统计）
+    for (auto& e : rtk_edges_) {
+        e->ComputeError();
+        auto it = frames_by_id_.find(e->GetVertex(0)->GetId());
+        if (it != frames_by_id_.end()) {
+            it->second->rtk_chi2_ = e->Chi2();
+        }
+    }
+
     // 确定inlier和outliers
     // RemoveOutliers();
 
@@ -272,6 +285,7 @@ void PGOImpl::BuildProblem() {
     // Add Factors
     if (is_in_map_) {
         AddLidarLocFactors();
+        AddRTKFactors();
     }
 
     AddLidarOdomFactors();
@@ -282,6 +296,7 @@ void PGOImpl::CleanProblem() {
     optimizer_->Clear();
     vertices_.clear();
     lidar_loc_edges_.clear();
+    rtk_edges_.clear();
     lidar_odom_edges_.clear();
     dr_edges_.clear();
     prior_edges_.clear();
@@ -494,6 +509,84 @@ void PGOImpl::AddPriorFactors() {
     }
 }
 
+void PGOImpl::ProcessRTK(const RTKData& rtk) {
+    // 注意：调用者（PGO::ProcessRTK）已持有 data_mutex_，此处不加锁
+    rtk_pose_queue_.emplace_back(rtk);
+    // 限制队列长度（100Hz × 30s = 3000，留足余量）
+    if (rtk_pose_queue_.size() > 3000) {
+        rtk_pose_queue_.pop_front();
+    }
+}
+
+bool PGOImpl::AssignRTKPoseIfNeeded(std::shared_ptr<PGOFrame> frame) {
+    // 调用链：PGO::ProcessLidarLoc（持 data_mutex_）→ ProcessPGOFrame → AddPGOFrame → 此处
+    // data_mutex_ 已在上层持有，保证 rtk_pose_queue_ 读取安全
+    assert(frame != nullptr);
+    if (rtk_pose_queue_.empty()) return false;
+
+    SE3 interp_pose;
+    RTKData best_match;
+    bool rtk_interp_done = false;
+
+    // 在 RTK 队列中按时间插值，获取 PGO 帧时刻的 RTK 位姿
+    // 位置线性插值，姿态 slerp（PoseInterp 内部实现）
+    rtk_interp_done = math::PoseInterp<RTKData>(
+        frame->timestamp_, rtk_pose_queue_, [](const RTKData& d) { return d.timestamp; },
+        [](const RTKData& d) { return SE3(d.orientation, d.position); }, interp_pose, best_match, 0.5);
+
+    if (rtk_interp_done) {
+        frame->rtk_set_ = true;
+        frame->rtk_valid_ = true;
+        frame->rtk_pose_ = interp_pose;
+        frame->rtk_delta_t_ = std::abs(frame->timestamp_ - best_match.timestamp);
+        // 噪声取自最近帧（不参与插值，避免噪声过度平滑）
+        frame->rtk_pos_std_ = best_match.pos_std;
+        frame->rtk_rot_std_ = best_match.rot_std;
+        return true;
+    }
+
+    // RTK 队列数据不足或时间偏差过大
+    return false;
+}
+
+void PGOImpl::AddRTKFactors() {
+    if (!current_frame_->rtk_set_ || !current_frame_->rtk_valid_) return;
+
+    auto v = optimizer_->GetVertex(current_frame_->frame_id_);
+    if (v == nullptr) return;
+
+    SE3 rtk_pose = current_frame_->rtk_pose_;
+    Vec3d pos_std = current_frame_->rtk_pos_std_;
+    Vec3d rot_std = current_frame_->rtk_rot_std_;
+
+    // 噪声过小或为零 → 回退到 YAML 默认值（避免 info 过大过度约束）
+    // 与 LoopClosing::AddRTKFactors 中 safe_pos_std/safe_rot_std 逻辑一致
+    auto safe_pos_std = [&](double s) { return (s > 1e-4) ? s : options_.rtk_pos_noise; };
+    auto safe_rot_std = [&](double s) { return (s > 1e-4) ? s : options_.rtk_ang_noise; };
+
+    // 构建信息矩阵（1/σ²）
+    Mat6d rtk_info = Mat6d::Zero();
+    rtk_info(0, 0) = 1.0 / (safe_pos_std(pos_std.x()) * safe_pos_std(pos_std.x()));
+    rtk_info(1, 1) = 1.0 / (safe_pos_std(pos_std.y()) * safe_pos_std(pos_std.y()));
+    rtk_info(2, 2) = 1.0 / (safe_pos_std(pos_std.z()) * safe_pos_std(pos_std.z()));
+    rtk_info(3, 3) = 1.0 / (safe_rot_std(rot_std.x()) * safe_rot_std(rot_std.x()));
+    rtk_info(4, 4) = 1.0 / (safe_rot_std(rot_std.y()) * safe_rot_std(rot_std.y()));
+    rtk_info(5, 5) = 1.0 / (safe_rot_std(rot_std.z()) * safe_rot_std(rot_std.z()));
+
+    auto e = std::make_shared<miao::EdgeSE3Prior>();
+    e->SetVertex(0, v);
+    e->SetMeasurement(rtk_pose);
+    e->SetInformation(rtk_info);
+
+    // P1修复：RobustKernelCauchy 构造函数不继承基类，必须用 SetDelta
+    auto rk = std::make_shared<miao::RobustKernelCauchy>();
+    rk->SetDelta(options_.rtk_outlier_th);
+    e->SetRobustKernel(rk);
+
+    optimizer_->AddEdge(e);
+    rtk_edges_.emplace_back(e);
+}
+
 void PGOImpl::RemoveOutliers() {
     int cnt_outliers = 0;
     auto remove_outlier = [&cnt_outliers, this](miao::Edge* e) {
@@ -526,6 +619,7 @@ void PGOImpl::CollectOptimizationStatistics() {
     /// 打印必要信息
     if (debug_) {
         LOG(INFO) << std::string("LidarLoc       -- ") + print_info(lidar_loc_edges_, options_.lidar_loc_outlier_th);
+        LOG(INFO) << std::string("RTK            -- ") + print_info(rtk_edges_, options_.rtk_outlier_th);
         LOG(INFO) << std::string("LidarOdom      -- ") + print_info(lidar_odom_edges_);
         LOG(INFO) << std::string("DR             -- ") + print_info(dr_edges_);
         LOG(INFO) << std::string("Marginal Prior -- ") + print_info(prior_edges_);

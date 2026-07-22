@@ -12,6 +12,7 @@
 #include "common/constant.h"
 #include "common/eigen_types.h"
 #include "common/nav_state.h"
+#include "common/rtk_data.h"
 #include "common/timed_pose.h"
 #include "core/graph/optimizer.h"
 #include "core/localization/localization_result.h"
@@ -37,14 +38,14 @@ struct PGOFrame {
     int opti_times_ = 0;  // 当前帧被优化的次数
 
     // GNSS/RTK观测【插值量】 | 提供绝对约束
-    // bool rtk_set_    = false;          // RTK是否已经设置（可以已设置但状态位无效）
-    // bool rtk_valid_  = false;          // RTK在[状态位]角度来看是否有效
-    // bool rtk_inlier_ = true;           // RTK在PGO看来是否为inlier
-    // SE3 rtk_pose_;                     // 插值得到的RTK pose（roll&pitch为零，z为零）
-    // double rtk_delta_t_          = 0;  // 插值时，bestmatch相对于上一帧rtk消息的时延
-    // double rtk_interp_time_error = 0;  // 当前帧在rtk队列上做插值时的时间误差
-    // common::UTMCoordinate rtk_utm_;    // 与PGO帧最接近的原始RTK观测
-    // double rtk_chi2_ = 0.0;            // RTK卡方误差
+    bool rtk_set_    = false;          // RTK是否已经设置（可以已设置但状态位无效）
+    bool rtk_valid_  = false;          // RTK在[状态位]角度来看是否有效
+    bool rtk_inlier_ = true;           // RTK在PGO看来是否为inlier
+    SE3 rtk_pose_;                     // 插值得到的RTK pose
+    double rtk_delta_t_          = 0;  // 插值时延（相对上一帧RTK消息）
+    Vec3d rtk_pos_std_ = Vec3d::Zero(); ///< RTK 位置标准差 (m)，来自 per-measurement 噪声
+    Vec3d rtk_rot_std_ = Vec3d::Zero(); ///< RTK 姿态标准差 (rad)，来自 per-measurement 噪声
+    double rtk_chi2_ = 0.0;            // RTK卡方误差
 
     // 激光定位观测 | 提供绝对约束
     bool lidar_loc_set_ = false;                         // lidarLoc是否已经设置（PGO由lodarLoc触发，正常是有效的）
@@ -116,6 +117,11 @@ struct PGOImpl {
         double pgo_frame_converge_pos_th = 0.05;                      // PGO帧位置收敛阈值
         double pgo_frame_converge_ang_th = 1.0 * constant::kDEG2RAD;  // PGO帧姿态收敛阈值
         double pgo_smooth_factor = 0.01;                              // PGO帧平滑因子
+
+        /// RTK 噪声参数（从 YAML 读取，仅当 per-frame 噪声 < 1e-4 时作为回退值）
+        double rtk_pos_noise = 0.1;         // RTK 位置噪声标准差 (m)
+        double rtk_ang_noise = 0.0052;      // RTK 姿态噪声标准差 (rad)，≈0.3°
+        double rtk_outlier_th = 10.0;       // RTK 异常值卡方阈值（Cauchy delta）
     };
 
     PGOImpl(Options options = {});
@@ -144,8 +150,17 @@ struct PGOImpl {
     // 添加顶点
     void AddVertex();
 
+    /// 接收 RTK 观测（高频 100Hz，仅入队）
+    void ProcessRTK(const RTKData& rtk);
+
+    /// 为 PGO 帧插值 RTK 位姿（仿照 AssignLidarOdomPoseIfNeeded）
+    bool AssignRTKPoseIfNeeded(std::shared_ptr<PGOFrame> frame);
+
     // 添加lidar定位约束
     void AddLidarLocFactors();
+
+    // 添加RTK绝对约束
+    void AddRTKFactors();
 
     // 添加帧间相对约束，我们更愿意相信LidarOdom，如果LO退化才会用DR
     void AddLidarOdomFactors();
@@ -203,6 +218,7 @@ struct PGOImpl {
     std::deque<NavState> dr_pose_queue_;          // DR位姿观测队列
     std::deque<NavState> lidar_odom_pose_queue_;  // LidarOdom观测队列
     std::deque<TimedPose> lidar_loc_pose_queue_;  // LidarLoc观测队列
+    std::deque<RTKData> rtk_pose_queue_;          // RTK 观测队列（100Hz → PGO 帧时刻插值降频）
     std::deque<TimedPose> output_pose_queue_;     // 输出位姿队列
 
     // internal variables
@@ -217,6 +233,7 @@ struct PGOImpl {
     std::vector<std::shared_ptr<miao::EdgeSE3>> lidar_odom_edges_;      // 相对运动观测（来自LidarOdom）
     std::vector<std::shared_ptr<miao::EdgeSE3>> dr_edges_;              // 相对运动观测（来自DR）
     std::vector<std::shared_ptr<miao::EdgeSE3Prior>> lidar_loc_edges_;  // 激光定位边
+    std::vector<std::shared_ptr<miao::EdgeSE3Prior>> rtk_edges_;        // RTK 绝对约束边
     std::vector<std::shared_ptr<miao::EdgeSE3Prior>> prior_edges_;      // 边缘化约束
 
     // output variables
@@ -226,8 +243,7 @@ struct PGOImpl {
     std::function<void(const LocalizationResult& output_result)> output_func_;
 
     /// params
-    Vec6d rtk_fix_noise_ = Vec6d::Zero();         // 固定解RTK噪声
-    Vec6d rtk_other_noise_ = Vec6d::Zero();       // 其他解RTK噪声
+    Vec6d rtk_noise_ = Vec6d::Zero();             // RTK 回退噪声（per-frame 噪声无效时使用）
     Vec6d lidar_loc_noise_ = Vec6d::Zero();       // lidarLoc噪声
     Vec6d lidar_odom_rel_noise_ = Vec6d::Zero();  // lidarOdom噪声
     Vec6d dr_rel_noise_ = Vec6d::Zero();          // DR噪声

@@ -295,6 +295,12 @@ bool PGO::ProcessLidarLoc(const LocalizationResult& loc_result) {
     return ProcessPGOFrame(new_frame);
 }
 
+bool PGO::ProcessRTK(const RTKData& rtk) {
+    UL lock(impl_->data_mutex_);
+    impl_->ProcessRTK(rtk);
+    return true;
+}
+
 bool PGO::ProcessPGOFrame(std::shared_ptr<PGOFrame> frame) {
     impl_->AddPGOFrame(frame);
 

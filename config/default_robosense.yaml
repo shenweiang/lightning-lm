@@ -125,11 +125,9 @@ pgo:
   lidar_odom_pos_noise: 0.3
   pgo_frame_converge_ang_th: 1.0
   pgo_frame_converge_pos_th: 0.05
-  rtk_fix_ang_noise: 2.0
-  rtk_fix_pos_noise: 1.0
-  rtk_height_noise_ratio: 10.0
-  rtk_other_ang_noise: 10.0
-  rtk_other_pos_noise: 5.0
+  rtk_pos_noise: 0.1         # RTK 位置噪声标准差 (m)，仅在 per-frame 噪声 < 1e-4 时作为回退值
+  rtk_ang_noise: 0.0052      # RTK 姿态噪声标准差 (rad)，≈0.3°，仅在 per-frame 噪声无效时回退
+  rtk_outlier_th: 10.0       # RTK 异常值卡方阈值（Cauchy delta）
   rtk_outlier_th: 1.0
   smooth_factor: 0.01
 roi:

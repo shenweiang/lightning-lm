@@ -258,9 +258,12 @@ void Localization::LidarLocProcCloud(CloudPtr scan_undist) {
 
 void Localization::ProcessRTKMsg(const RTKData& rtk) {
     // 无需加锁：lio_->ProcessRTK() 仅做 deque::emplace_back，Lock-Free 安全；
-    // 加 global_mutex_ 反而会与 lidar 处理的 ICP 计算产生不必要的锁竞争
+    // pgo_->ProcessRTK() 同理（内部仅入队），加 global_mutex_ 反而会与 ICP 产生锁竞争
     if (lio_ != nullptr) {
         lio_->ProcessRTK(rtk);
+    }
+    if (pgo_ != nullptr) {
+        pgo_->ProcessRTK(rtk);
     }
 }
 

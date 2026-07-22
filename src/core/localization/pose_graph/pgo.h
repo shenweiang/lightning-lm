@@ -2,6 +2,7 @@
 
 #include "common/eigen_types.h"
 #include "common/nav_state.h"
+#include "common/rtk_data.h"
 #include "core/localization/localization_result.h"
 
 #include "pgo_impl.h"
@@ -46,6 +47,9 @@ class PGO {
 
     /// 接收激光定位信息（触发PGO优化）
     bool ProcessLidarLoc(const LocalizationResult& loc_result);
+
+    /// 处理 RTK 观测（100Hz → 内部队列 → PGO 帧时刻插值降频）
+    bool ProcessRTK(const RTKData& rtk);
 
     /// 处理外部组装好的一个PGO frame，将触发优化（仅在单测时外部直接调用）
     bool ProcessPGOFrame(std::shared_ptr<PGOFrame> frame);
